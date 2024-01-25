@@ -88,7 +88,7 @@ import itertools
 import polars as pl
 from cleantext import clean
 from tqdm import tqdm
-from rich import print
+from rich import print .
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 from httpx import RequestError
