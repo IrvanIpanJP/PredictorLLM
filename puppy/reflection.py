@@ -14,13 +14,13 @@ from .prompts import (
     train_memory_id_extract_prompt,
     train_trade_reason_summary,
     train_investment_info_prefix,
-    test_prompt,  # sourcery skip: dont-import-test-modules
-    test_trade_reason_summary,  # sourcery skip: dont-import-test-modules
-    test_memory_id_extract_prompt,  # sourcery skip: dont-import-test-modules
-    test_invest_action_choice,  # sourcery skip: dont-import-test-modules
-    test_investment_info_prefix,  # sourcery skip: dont-import-test-modules
-    test_sentiment_explanation,  # sourcery skip: dont-import-test-modules
-    test_momentum_explanation,  # sourcery skip: dont-import-test-modules
+    test_prompt,
+    test_trade_reason_summary,
+    test_memory_id_extract_prompt,
+    test_invest_action_choice,
+    test_investment_info_prefix,
+    test_sentiment_explanation,
+    test_momentum_explanation,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,8 +162,7 @@ def _format_memories(
     List[str],
     List[int],
 ]:
-    # add placeholder information if not memory is available
-    # each memory has a duplicate because guardrails::ValidChoices does not support single choice
+    # add placeholder if no memory
     if (short_memory is None) or len(short_memory) == 0:
         short_memory = ["No short-term information.", "No short-term information."]
         short_memory_id = [-1, -1]
@@ -226,20 +225,17 @@ def _delete_placeholder_info(validated_output: Dict[str, Any]) -> Dict[str, Any]
 
 
 def _add_momentum_info(momentum: int, investment_info: str) -> str:
+    """
+    Add text about momentum (positive, negative, or zero) to the reflection output.
+    """
     if momentum == -1:
-        investment_info += (
-            "The cumulative return of past 3 days for this stock is negative."
-        )
+        investment_info += "The cumulative return of the past few days for this asset is negative."
 
     elif momentum == 0:
-        investment_info += (
-            "The cumulative return of past 3 days for this stock is zero."
-        )
+        investment_info += "The cumulative return of the past few days for this asset is zero."
 
     elif momentum == 1:
-        investment_info += (
-            "The cumulative return of past 3 days for this stock is positive."
-        )
+        investment_info += "The cumulative return of the past few days for this asset is positive."
 
     return investment_info
 
