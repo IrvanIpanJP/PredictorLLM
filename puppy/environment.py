@@ -7,13 +7,13 @@ from pydantic import BaseModel, ValidationError
 
 # type alias
 market_info_type = Tuple[
-    date,  # cur date
-    float,  # cur price
-    str,  # cur filing_k
-    str,  # cur filing_q
-    List[str],  # cur news
-    float,  # cur record
-    bool,  # termination flag
+    date,        # cur date
+    float,       # cur asset price
+    str,         # cur "filing_k" (or similar fundamental data)
+    str,         # cur "filing_q"
+    List[str],   # cur news
+    float,       # cur record (future difference)
+    bool,        # termination flag
 ]
 terminated_market_info_type = Tuple[None, None, None, None, None, None, bool]
 
@@ -27,6 +27,11 @@ class OneDateRecord(BaseModel):
 
 
 class MarketEnvironment:
+    """
+    MarketEnvironment can represent historical data for any symbol (stock, crypto, etc.). 
+    You supply 'price', 'filing_k', 'filing_q', 'news' for each date. 
+    """
+
     def __init__(
         self,
         env_data_pkl: Dict[date, Dict[str, Any]],
@@ -34,7 +39,6 @@ class MarketEnvironment:
         end_date: date,
         symbol: str,
     ) -> None:
-        # validate structure
         first_date = list(env_data_pkl.keys())[0]
         if not isinstance(first_date, date):
             raise TypeError("env_data_pkl keys must be date type")
@@ -42,13 +46,12 @@ class MarketEnvironment:
             OneDateRecord.model_validate(env_data_pkl[first_date])
         except ValidationError as e:
             raise e
+
         self.date_series = env_data_pkl.keys()
         if (start_date not in self.date_series) or (end_date not in self.date_series):
             raise ValueError("start_date and end_date must be in env_data_pkl keys")
-        self.date_series = [
-            i for i in self.date_series if (i >= start_date) and (i <= end_date)
-        ]
 
+        self.date_series = [i for i in self.date_series if (i >= start_date) and (i <= end_date)]
         self.date_series = sorted(self.date_series)
         self.date_series_keep = self.date_series.copy()
         self.simulation_length = len(self.date_series)
@@ -68,6 +71,14 @@ class MarketEnvironment:
         self.cur_date = None
 
     def step(self) -> Union[market_info_type, terminated_market_info_type]:
+        """
+        Returns a single time-step of environment data:
+          - current date
+          - current asset price
+          - textual data (filing_k, filing_q, news)
+          - the next-step difference in price (future_record),
+          - done flag
+        """
         try:
             self.cur_date = self.date_series.pop(0)  # type: ignore
             future_date = self.date_series[0]  # type: ignore
@@ -80,10 +91,13 @@ class MarketEnvironment:
         cur_filing_k = self.env_data[self.cur_date]["filing_k"]
         cur_filing_q = self.env_data[self.cur_date]["filing_q"]
         cur_news = self.env_data[self.cur_date]["news"]
+
+        # future_record is the difference for 'symbol' from this date to next
         cur_record = {
             symbol: future_price[symbol] - cur_price[symbol]  # type: ignore
             for symbol in cur_price  # type: ignore
         }
+
         return (
             cur_date,
             cur_price[self.symbol],
@@ -108,9 +122,8 @@ class MarketEnvironment:
     @classmethod
     def load_checkpoint(cls, path: str) -> "MarketEnvironment":
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Path {path} does not exists")
+            raise FileNotFoundError(f"Path {path} does not exist")
         with open(os.path.join(path, "env.pkl"), "rb") as f:
             env = pickle.load(f)
-        # update
         env.simulation_length = len(env.date_series)
         return env
