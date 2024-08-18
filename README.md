@@ -1,25 +1,39 @@
-# PredictorLLM: An Advanced LLM-Based Trading Agent with Enhanced Memory and Design Features
+Below is an updated **README** that includes references to both stocks and cryptocurrencies. Feel free to tailor it further to your specific context.
+
+---
+
+# PredictorLLM: An Advanced LLM-Based Trading Agent for Stocks and Crypto
 
 [![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/ambv/black)
 
-This repository provides the Python source code for **PredictorLLM**, an advanced trading agent framework built upon large language models (LLMs) with enhanced memory architecture and intelligent design features.
+**PredictorLLM** is an advanced trading agent framework built upon large language models (LLMs) to facilitate automated trading across multiple financial markets—ranging from traditional equities (stocks) to digital assets (cryptocurrencies). This framework integrates a layered, human-inspired memory system with intelligent design features, enabling robust decision-making in dynamic markets.
 
 ## Overview
 
-PredictorLLM leverages the capabilities of large language models to facilitate automated trading in dynamic financial markets. This framework integrates three core components:
+PredictorLLM is composed of three core modules:
 
-1. **Profiling Module**: Establishes agent characteristics and operational scope.
-2. **Layered Memory Module**: Utilizes a structured memory system inspired by human cognitive processes for retaining and prioritizing financial data.
-3. **Decision-Making Module**: Converts insights from memory into actionable trading strategies.
+1. **Profiling Module**: Establishes agent characteristics, operational scope, and risk preferences (adaptable for both stocks and crypto).
+2. **Layered Memory Module**: A structured multi-level memory system, which stores and retrieves relevant textual data (e.g., news, filings, protocol updates) to guide the agent’s trading logic.
+3. **Decision-Making Module**: Translates insights from memory into actionable trading strategies. The agent can handle short-term, mid-term, long-term, and reflection-level analyses, mimicking professional traders yet surpassing human limitations in data processing.
 
-With adjustable memory spans and the ability to assimilate hierarchical information, PredictorLLM mimics the behavior of professional traders while surpassing human limitations in data retention and processing. The framework continuously evolves to improve trading decisions and adapts to volatile market conditions, delivering superior investment outcomes.
+By continuously learning from market fluctuations—be it stock price changes or on-chain data for crypto—PredictorLLM adapts to volatility and evolving trends, aiming for optimal investment outcomes.
 
-![Memory Flow](figures/memory_flow.png)
-![Workflow](figures/workflow.png)
-![Character Design](figures/character.png)
+<div align="center">
+  <img src="figures/memory_flow.png" alt="Memory Flow" width="600" />
+  <br/><em>Illustration of multi-level memory flow</em>
+</div>
+
+<div align="center">
+  <img src="figures/workflow.png" alt="Workflow" width="600" />
+  <br/><em>Overall workflow architecture</em>
+</div>
+
+<div align="center">
+  <img src="figures/character.png" alt="Character Design" width="600" />
+  <br/><em>Character design concept for the AI trader</em>
+</div>
 
 ---
 
@@ -27,51 +41,51 @@ With adjustable memory spans and the ability to assimilate hierarchical informat
 
 ### Docker Setup
 
-We recommend using Docker for seamless code execution. The Dockerfile is available at [Dockerfile](), along with a development container setup for VSCode at [devcontainer.json]().
+For a quick and consistent environment, we recommend Docker. A sample `Dockerfile` and VSCode development container config (`.devcontainer/devcontainer.json`) are provided.
 
 ### Dependencies
 
-PredictorLLM runs on Python 3.10. Install all required dependencies using [poetry](https://python-poetry.org/):
+PredictorLLM runs on **Python 3.10**. We use [Poetry](https://python-poetry.org/) for dependency management. Install dependencies with:
 
 ```bash
-poetry config virtualenvs.in-project true  # Optional: Install virtualenv in the project
+poetry config virtualenvs.in-project true  # Optional: keep virtualenv in project folder
 poetry install
 ```
 
-We suggest using [pipx](https://pypa.github.io/pipx/) to install poetry. Activate the virtual environment using `poetry shell` or `source .venv/bin/activate` (if virtualenv is installed in the project folder).
+You may also wish to use [pipx](https://pypa.github.io/pipx/) to install Poetry system-wide. Activate the Poetry shell by running `poetry shell` or `source .venv/bin/activate` (if `.venv` is installed locally).
 
 ### Running the Code
 
-The entry point for the code is `run.py`. Use the following command to view available options:
+Use `run.py` as the primary entry point:
 
 ```bash
 python run.py --help
 ```
 
-Configuration settings are stored in `config/config.toml`.
+Configuration settings (e.g., memory thresholds, LLM endpoints, or data paths) are specified in `config/config.toml`.
 
 ### Training the Model
 
-To train the model, use:
+To train the agent:
 
 ```bash
 python run.py train
 ```
 
-Default options include:
+Common options include:
 
 ```plaintext
---market-data-path  -mdp      TEXT     The market data path [default: /workspaces/ArkGPT/data/06_input/subset_symbols.pkl]                                 │
---start-time        -st       TEXT     The start time [default: 2022-03-14]                                                                                │
---end-time          -et       TEXT     The end time [default: 2022-06-27]                                                                                  │
---config-path       -cp       TEXT     Config file path [default: config/config.toml]                                                                                                                                                │
---checkpoint-path   -ckp      TEXT     The checkpoint path [default: data/09_checkpoint]                                                                   │
---save-every        -se       INTEGER  Save every n steps [default: 1]                                                                                     │
---result-path       -rp       TEXT     The result save path [default: data/11_train_result]                                                                │
+--market-data-path  -mdp      TEXT     The market data path
+--start-time        -st       TEXT     The start time
+--end-time          -et       TEXT     The end time
+--config-path       -cp       TEXT     Config file path [default: config/config.toml]
+--checkpoint-path   -ckp      TEXT     Where to store checkpoints
+--save-every        -se       INTEGER  Frequency (n steps) for saving checkpoints
+--result-path       -rp       TEXT     Where to store training results
 --help                                 Show this message and exit.
 ```
 
-Training automatically saves checkpoints to resume progress in case of interruptions. Resume training using:
+Training automatically saves checkpoints. To resume from the latest checkpoint:
 
 ```bash
 python run.py train-checkpoint
@@ -81,58 +95,70 @@ python run.py train-checkpoint
 
 ## Notes
 
-### Data Sources
+### Multi-Asset Data Handling
 
-| Type              | Source                 | Notes                          | Download Method                                              |
-| ----------------- | ---------------------- | ------------------------------ | ------------------------------------------------------------ |
-| Daily Stock Price | Yahoo Finance          | Open, High, Low, Close, Volume | [yfinance](https://pypi.org/project/yfinance/)               |
-| Daily Market News | Alpaca Market News API | Historical news                | [Alpaca News API](https://docs.alpaca.markets/docs/news-api) |
-| Company 10-K      | SEC EDGAR              | Item 7                         | [SEC API](https://sec-api.io/docs)                           |
-| Company 10-Q      | SEC EDGAR              | Part 1 Item 2                  | [SEC API](https://sec-api.io/docs)                           |
+PredictorLLM accommodates both **equity** (stock) data and **cryptocurrency** data. You can provide your own market data feeds, protocol updates, or filings (e.g., SEC 10-Ks for stocks, or on-chain analytics for crypto). The framework’s layered memory allows storing and prioritizing text data—such as **company filings**, **crypto project whitepapers**, **news** articles, and **price** information—in short, mid, long, or reflection-term memory.
+
+### Example Data Sources
+
+| Type                         | Source                                                | Notes                           | Example Download / API                                       |
+| ---------------------------- | ----------------------------------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| **Daily Stock Price**        | [Yahoo Finance](https://finance.yahoo.com/)           | Open, High, Low, Close, Volume  | [yfinance](https://pypi.org/project/yfinance/)               |
+| **Daily Market News**        | [Alpaca Market News API](https://alpaca.markets/)     | Historical news                 | [Alpaca News API](https://docs.alpaca.markets/docs/news-api) |
+| **Company 10-K / 10-Q**      | [SEC EDGAR](https://www.sec.gov/edgar.shtml)          | e.g., Item 7 / Part 1 Item 2    | [SEC API](https://sec-api.io/docs)                           |
+| **Crypto Price Feeds**       | [CoinGecko API](https://www.coingecko.com/en/api)     | Daily OHLC data, volume, etc.   | [CoinGecko data endpoints](https://www.coingecko.com/en/api) |
+| **On-Chain / Protocol Data** | Etherscan, Polygonscan, or other blockchain explorers | Transaction metrics, DEX volume | Various explorer APIs                                        |
 
 ### Data Schemas
 
-**Daily Stock Price**
+Below are illustrative column schemas; feel free to adapt them to crypto or other assets:
+
+**Daily Price (Stock/Crypto)**
 | Column | Type | Notes |
-|-----------|---------|---------------------|
-| Date | datetime| - |
-| Open | float | Opening price |
-| High | float | Highest price |
-| Low | float | Lowest price |
-| Close | float | Closing price |
-| Adj Close | float | Adjusted closing price |
-| Volume | float | Trade volume |
-| Symbol | str | Ticker symbol |
+|-----------|----------|-----------------------------------|
+| `Date` | datetime | Trading or historical date |
+| `Open` | float | Opening price |
+| `High` | float | Highest price during the day |
+| `Low` | float | Lowest price during the day |
+| `Close` | float | Closing price |
+| `Volume` | float | Trading volume or on-chain volume |
+| `Symbol` | str | Ticker symbol or crypto pair |
 
-**Daily Market News**
+**Daily News**
 | Column | Type | Notes |
-|-----------|---------|---------------------|
-| Author | str | - |
-| Content | str | Content of news |
-| DateTime | datetime| News timestamp |
-| Date | datetime| Adjusted for trading hours |
-| Source | str | News source |
-| Summary | str | News summary |
-| Title | str | News title |
-| URL | str | News link |
-| Equity | str | Ticker symbol |
-| Text | str | Combined title and summary |
+|-----------|----------|---------------------------|
+| `Author` | str | - |
+| `Content` | str | Main text of the article |
+| `DateTime`| datetime | Timestamp of article |
+| `Date` | datetime | Adjusted to trading hours |
+| `Source` | str | News source, e.g. 'AP' |
+| `Summary` | str | One-line summary |
+| `Title` | str | Headline |
+| `URL` | str | Link to article |
+| `Equity` or `Asset`| str | Stock symbol or crypto name |
+| `Text` | str | Concatenated title/summary|
 
-**Company 10-K & 10-Q**
+**Company 10-K / 10-Q or Crypto Whitepapers**
 | Column | Type | Notes |
-|----------------|---------|----------------------------|
-| Document URL | str | Link to EDGAR file |
-| Content | str | Extracted text content |
-| Ticker | str | Company ticker symbol |
-| UTC Timestamp | datetime| Coordinated Universal Time |
-| EST Timestamp | datetime| Eastern Standard Time |
-| Type | str | Report type ("10-K" or "10-Q") |
+|----------------|----------|-------------------------------|
+| `Document URL` | str | Link to original filing/doc |
+| `Content` | str | Extracted text content |
+| `Ticker` | str | Stock ticker or crypto symbol |
+| `UTC Timestamp`| datetime | Filing time (UTC) |
+| `Type` | str | e.g., “10-K”, “Whitepaper” |
 
-```
+---
 
-This revision avoids referencing the scientific paper and adjusts the language for general documentation purposes.
-```
+## Contributing
 
-```
+Contributions and pull requests to extend crypto-specific features, add additional data sources, or refine memory mechanisms are welcome. Please review our [contribution guidelines](CONTRIBUTING.md) (coming soon).
 
-```
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+**Happy Trading!**
+
+Leverage the power of LLMs for **stocks**, **crypto**, and beyond — adapt and integrate data sources, and enjoy a flexible, human-like memory system for advanced automated trading.
