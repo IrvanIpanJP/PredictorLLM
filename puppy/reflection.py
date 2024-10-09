@@ -5,6 +5,8 @@ from .run_type import RunMode
 from pydantic import BaseModel, Field
 from guardrails.validators import ValidChoices
 from typing import List, Callable, Dict, Union, Any, Tuple
+
+# IMPORTANT: updated to import from .prompts
 from .prompts import (
     short_memory_id_desc,
     mid_memory_id_desc,
@@ -37,9 +39,7 @@ def _train_memory_factory(memory_layer: str, id_list: List[int]):
     class Memory(BaseModel):
         memory_index: int = Field(
             ...,
-            description=train_memory_id_extract_prompt.format(
-                memory_layer=memory_layer
-            ),
+            description=train_memory_id_extract_prompt.format(memory_layer=memory_layer),
             validators=[ValidChoices(id_list, on_fail="reask")],  # type: ignore
         )
 
