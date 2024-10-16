@@ -7,10 +7,13 @@ from langchain.embeddings import OpenAIEmbeddings
 
 class OpenAILongerThanContextEmb:
     """
-    Embedding function with openai as embedding backend.
-    If the input is larger than the context size, the input is split into chunks of size `chunk_size` and embedded separately.
-    The final embedding is the average of the embeddings of the chunks.
-    Details see: https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_long_inputs.ipynb
+    An embedding class that uses OpenAI as the embedding backend. If the input
+    text exceeds the model's context size, the input is split into smaller
+    chunks of size `chunk_size` and each chunk is embedded separately. The
+    final embedding is the average of these chunk embeddings.
+
+    Reference:
+        https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_long_inputs.ipynb
     """
 
     def __init__(
@@ -21,38 +24,35 @@ class OpenAILongerThanContextEmb:
         verbose: bool = False,
     ) -> None:
         """
-        Initializes the Embedding object.
+        Initialize the OpenAILongerThanContextEmb object.
 
         Args:
-            openai_api_key (str): The API key for OpenAI.
-            embedding_model (str, optional): The model to use for embedding. Defaults to "text-embedding-ada-002".
-            chunk_size (int, optional): The maximum number of token to send to openai embedding model at one time. Defaults to 5000.
-            verbose (bool, optional): Whether to show progress bar during embedding. Defaults to False.
-
-        Returns:
-            None
+            openai_api_key (str, optional): The API key for OpenAI. If not provided,
+                the key is retrieved from the environment variable OPENAI_API_KEY.
+            embedding_model (str, optional): The OpenAI model to use for embedding.
+                Defaults to "text-embedding-ada-002".
+            chunk_size (int, optional): The maximum number of tokens to send
+                to the embedding model per request. Defaults to 5000.
+            verbose (bool, optional): Whether to show a progress bar in LangChain.
+                Defaults to False.
         """
         self.openai_api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
         self.emb_model = OpenAIEmbeddings(
             model=embedding_model,
-            api_key=openai_api_key or os.environ.get("OPENAI_API_KEY"),
+            api_key=self.openai_api_key,
             chunk_size=chunk_size,
             show_progress_bar=verbose,
         )
 
-    async def _emb(self, text: Union[List[str], str]) -> List[List[float]]:
+    async def _embed_async(self, text: Union[List[str], str]) -> List[List[float]]:
         """
-        Asynchronously performs embedding on a list of text.
-
-        This method calls the `aembed_documents` method of the `emb_model` object to embed the input text.
+        Asynchronously embed one or more text strings.
 
         Args:
-            self: The instance of the class.
-            text (List[str]): A list of text to be embedded.
+            text (List[str] or str): A list of text or a single string.
 
         Returns:
-            List[List[float]]: The embeddings of the input text as a list of lists of floats.
-
+            List[List[float]]: A list of embeddings (one for each input).
         """
         if isinstance(text, str):
             text = [text]
@@ -60,40 +60,30 @@ class OpenAILongerThanContextEmb:
 
     def __call__(self, text: Union[List[str], str]) -> np.ndarray:
         """
-        Performs embedding on a list of text.
-
-        This method calls the `_emb` method to asynchronously embed the input text using the `emb_model` object.
+        Embed a list of text or a single text string synchronously.
 
         Args:
-            self: The instance of the class.
-            text (List[str]): A list of text to be embedded.
+            text (List[str] or str): The text(s) to embed.
 
         Returns:
-            np.array: The embedding of the input text as a NumPy array.
-
+            np.ndarray: A NumPy array of embeddings (shape: [num_texts, embedding_dimension]).
         """
-        return np.array(asyncio.run(self._emb(text))).astype("float32")
+        return np.array(asyncio.run(self._embed_async(text))).astype("float32")
 
-    def get_embedding_dimension(self):
+    def get_embedding_dimension(self) -> int:
         """
-        Returns the dimension of the embedding.
-
-        This method checks the value of `self.emb_model.model` and returns the corresponding embedding dimension. If the model is not implemented, a `NotImplementedError` is raised.
-
-        Args:
-            self: The instance of the class.
-
-        Returns:
-            int: The dimension of the embedding.
+        Return the dimension of the embedding for the specified model.
 
         Raises:
-            NotImplementedError: Raised when the embedding dimension for the specified model is not implemented.
+            NotImplementedError: If the embedding dimension for the given model is not implemented.
 
+        Returns:
+            int: Dimension size of the embedding vector.
         """
         match self.emb_model.model:
             case "text-embedding-ada-002":
                 return 1536
             case _:
                 raise NotImplementedError(
-                    f"Embedding dimension for model {self.emb_model.model} not implemented"
+                    f"Embedding dimension for model {self.emb_model.model} is not implemented."
                 )

@@ -5,21 +5,23 @@ from datetime import date
 from typing import List, Dict, Tuple, Union, Any
 from pydantic import BaseModel, ValidationError
 
-# type alias
+# Type alias for one environment step
 market_info_type = Tuple[
-    date,        # cur date
-    float,       # cur asset price
-    str,         # cur "filing_k" (or similar fundamental data)
-    str,         # cur "filing_q"
-    List[str],   # cur news
-    float,       # cur record (future difference)
-    bool,        # termination flag
+    date,       # current date
+    float,      # current asset price
+    str,        # filing_k
+    str,        # filing_q
+    List[str],  # news
+    float,      # future difference
+    bool,       # done flag
 ]
 terminated_market_info_type = Tuple[None, None, None, None, None, None, bool]
 
 
-# env data structure validation
 class OneDateRecord(BaseModel):
+    """
+    Validates the structure for a single date in the environment data.
+    """
     price: Dict[str, float]
     filing_k: Dict[str, str]
     filing_q: Dict[str, str]
@@ -28,8 +30,12 @@ class OneDateRecord(BaseModel):
 
 class MarketEnvironment:
     """
-    MarketEnvironment can represent historical data for any symbol (stock, crypto, etc.). 
-    You supply 'price', 'filing_k', 'filing_q', 'news' for each date. 
+    Manages historical (or synthetic) data for a single symbol. Each date has:
+        - price
+        - filing_k
+        - filing_q
+        - news
+    The environment steps through the dates, returning data for each step.
     """
 
     def __init__(
@@ -39,90 +45,109 @@ class MarketEnvironment:
         end_date: date,
         symbol: str,
     ) -> None:
+        if not env_data_pkl:
+            raise ValueError("env_data_pkl cannot be empty.")
+
         first_date = list(env_data_pkl.keys())[0]
         if not isinstance(first_date, date):
-            raise TypeError("env_data_pkl keys must be date type")
+            raise TypeError("env_data_pkl keys must be of type datetime.date")
+
         try:
             OneDateRecord.model_validate(env_data_pkl[first_date])
         except ValidationError as e:
-            raise e
+            raise ValueError(f"Failed validation for initial date record: {e}")
 
-        self.date_series = env_data_pkl.keys()
-        if (start_date not in self.date_series) or (end_date not in self.date_series):
-            raise ValueError("start_date and end_date must be in env_data_pkl keys")
+        self.date_series_full = sorted(env_data_pkl.keys())
+        if (start_date not in self.date_series_full) or (end_date not in self.date_series_full):
+            raise ValueError("start_date and end_date must exist in env_data_pkl keys.")
 
-        self.date_series = [i for i in self.date_series if (i >= start_date) and (i <= end_date)]
-        self.date_series = sorted(self.date_series)
-        self.date_series_keep = self.date_series.copy()
-        self.simulation_length = len(self.date_series)
+        # Keep only the slice of dates
+        self.date_series = [d for d in self.date_series_full if (start_date <= d <= end_date)]
         self.start_date = start_date
         self.end_date = end_date
         self.cur_date = None
         self.env_data = env_data_pkl
         self.symbol = symbol
 
+        self.simulation_length = len(self.date_series)
+        self.date_series_keep = self.date_series.copy()
+
     def reset(self) -> None:
+        """
+        Reset the environment to the start_date -> end_date date range.
+        """
         self.date_series = [
-            i
-            for i in self.date_series_keep
-            if (i >= self.start_date) and (i <= self.end_date)
+            d for d in self.date_series_keep
+            if (self.start_date <= d <= self.end_date)
         ]
-        self.date_series = sorted(self.date_series)
         self.cur_date = None
 
     def step(self) -> Union[market_info_type, terminated_market_info_type]:
         """
-        Returns a single time-step of environment data:
-          - current date
-          - current asset price
-          - textual data (filing_k, filing_q, news)
-          - the next-step difference in price (future_record),
-          - done flag
+        Return one timestep of data:
+          - (cur_date, cur_price, filing_k, filing_q, news, future_record, done_flag)
+        or (None, None, None, None, None, None, True) if we reach the end.
+
+        future_record is the price difference (symbol) from current day to next day.
         """
-        try:
-            self.cur_date = self.date_series.pop(0)  # type: ignore
-            future_date = self.date_series[0]  # type: ignore
-        except IndexError:
+        if not self.date_series:
+            return None, None, None, None, None, None, True
+
+        # pop the first date
+        self.cur_date = self.date_series.pop(0)
+
+        if not self.date_series:
             return None, None, None, None, None, None, True
 
         cur_date = self.cur_date
-        cur_price = self.env_data[self.cur_date]["price"]
-        future_price = self.env_data[future_date]["price"]
-        cur_filing_k = self.env_data[self.cur_date]["filing_k"]
-        cur_filing_q = self.env_data[self.cur_date]["filing_q"]
-        cur_news = self.env_data[self.cur_date]["news"]
+        next_date = self.date_series[0]
+        cur_entry = self.env_data[cur_date]
+        next_entry = self.env_data[next_date]
 
-        # future_record is the difference for 'symbol' from this date to next
-        cur_record = {
-            symbol: future_price[symbol] - cur_price[symbol]  # type: ignore
-            for symbol in cur_price  # type: ignore
-        }
+        # symbol price
+        cur_price = cur_entry["price"].get(self.symbol, 0.0)
+        next_price = next_entry["price"].get(self.symbol, 0.0)
+        filing_k = cur_entry["filing_k"].get(self.symbol, "")
+        filing_q = cur_entry["filing_q"].get(self.symbol, "")
+        news_list = cur_entry["news"].get(self.symbol, [])
+        future_diff = next_price - cur_price
 
         return (
             cur_date,
-            cur_price[self.symbol],
-            cur_filing_k[self.symbol],
-            cur_filing_q[self.symbol],
-            cur_news[self.symbol],
-            cur_record[self.symbol],
+            cur_price,
+            filing_k,
+            filing_q,
+            news_list,
+            future_diff,
             False,
         )
 
     def save_checkpoint(self, path: str, force: bool = False) -> None:
+        """
+        Save the entire MarketEnvironment to disk, so the simulation state can be resumed.
+        """
         path = os.path.join(path, "env")
         if os.path.exists(path):
-            if force:
-                shutil.rmtree(path)
-            else:
-                raise FileExistsError(f"Path {path} already exists")
+            if not force:
+                raise FileExistsError(f"Path {path} already exists.")
+            shutil.rmtree(path)
         os.mkdir(path)
         with open(os.path.join(path, "env.pkl"), "wb") as f:
             pickle.dump(self, f)
 
     @classmethod
     def load_checkpoint(cls, path: str) -> "MarketEnvironment":
+        """
+        Load the MarketEnvironment from disk.
+
+        Args:
+            path (str): Path to the folder containing "env.pkl".
+
+        Returns:
+            MarketEnvironment: The restored environment instance.
+        """
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Path {path} does not exist")
+            raise FileNotFoundError(f"Path {path} does not exist.")
         with open(os.path.join(path, "env.pkl"), "rb") as f:
             env = pickle.load(f)
         env.simulation_length = len(env.date_series)

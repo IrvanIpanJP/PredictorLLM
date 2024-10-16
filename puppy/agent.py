@@ -3,19 +3,22 @@ import shutil
 import pickle
 import logging
 from datetime import date
+from typing import Dict, Union, Any, List
+
+from abc import ABC, abstractmethod
+
 from .run_type import RunMode
 from .memorydb import BrainDB
 from .portfolio import Portfolio
-from abc import ABC, abstractmethod
 from .chat import get_chat_end_points
 from .environment import market_info_type
-from typing import Dict, Union, Any, List
 from .reflection import trading_reflection
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logging_formatter = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
 file_handler = logging.FileHandler("run.log", "a")
 file_handler.setFormatter(logging_formatter)
@@ -23,21 +26,30 @@ logger.addHandler(file_handler)
 
 
 class Agent(ABC):
+    """
+    Abstract base class for agents that can interact with a MarketEnvironment.
+    """
+
     @abstractmethod
     def from_config(self, config: Dict[str, Any]) -> "Agent":
+        """
+        Create an Agent from a provided configuration dictionary.
+        """
         pass
 
     @abstractmethod
     def train_step(self) -> None:
+        """
+        Execute one training step for the agent.
+        """
         pass
 
 
-# LLM Agent
 class LLMAgent(Agent):
     """
-    LLMAgent can handle short-term, mid-term, long-term, and reflection memories
-    for an asset (stock, crypto, etc.). It queries relevant memory, invokes 
-    a reflection LLM prompt, logs the reflection, and then updates an internal Portfolio.
+    LLMAgent handles short-term, mid-term, long-term, and reflection memories for
+    a specific symbol. It queries relevant memory, invokes a reflection LLM,
+    logs the reflection, updates an internal Portfolio, and can store/reload its state.
     """
 
     def __init__(
@@ -51,9 +63,22 @@ class LLMAgent(Agent):
         chat_end_point_config: Union[Dict[str, Any], None] = None,
         look_back_window_size: int = 7,
     ):
+        """
+        Initialize the LLMAgent.
+
+        Args:
+            agent_name (str): Name of the agent.
+            trading_symbol (str): Symbol the agent trades (stock, crypto, etc.).
+            character_string (str): A query or "character" used to retrieve relevant memory.
+            brain_db (BrainDB): Aggregated memory storage for short, mid, long, reflection layers.
+            top_k (int, optional): Number of memory records to retrieve. Defaults to 1.
+            chat_end_point_name (str, optional): Type of chat endpoint ("openai" or "together"). Defaults to "openai".
+            chat_end_point_config (Dict[str, Any], optional): Configuration for the chosen chat endpoint.
+            look_back_window_size (int, optional): Window used to compute feedback for memory importance. Defaults to 7.
+        """
         if chat_end_point_config is None:
             chat_end_point_config = {"model_name": "gpt-4", "temperature": 0.7}
-        # base
+
         self.counter = 1
         self.top_k = top_k
         self.agent_name = agent_name
@@ -62,23 +87,35 @@ class LLMAgent(Agent):
         self.chat_end_point_name = chat_end_point_name
         self.chat_end_point_config = chat_end_point_config
         self.look_back_window_size = look_back_window_size
-        # brain db
+
+        # Brain DB
         self.brain = brain_db
-        # portfolio class
+
+        # Portfolio
         self.portfolio = Portfolio(
-            symbol=self.trading_symbol, lookback_window_size=self.look_back_window_size
+            symbol=self.trading_symbol,
+            lookback_window_size=self.look_back_window_size
         )
-        # chat end points
+
+        # Chat endpoints
         self.chat_end_point = get_chat_end_points(
-            end_point_type=chat_end_point_name, chat_config=chat_end_point_config
+            end_point_type=chat_end_point_name,
+            chat_config=chat_end_point_config
         )
         self.guardrail_endpoint = self.chat_end_point.guardrail_endpoint()
-        # reflection records
-        self.reflection_result_series_dict = {}
-        self.access_counter = {}
+
+        # Reflection records
+        self.reflection_result_series_dict: Dict[date, Dict[str, Any]] = {}
+        self.access_counter: Dict[str, int] = {}
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMAgent":
+        """
+        Construct an LLMAgent from a configuration dictionary.
+
+        Returns:
+            LLMAgent: The agent instance.
+        """
         return cls(
             agent_name=config["general"]["agent_name"],
             trading_symbol=config["general"]["trading_symbol"],
@@ -90,291 +127,257 @@ class LLMAgent(Agent):
             look_back_window_size=config["general"]["look_back_window_size"],
         )
 
-    def _handling_filings(self, cur_date: date, filing_q: str, filing_k: str) -> None:
+    def _handle_filings(self, cur_date: date, filing_q: str, filing_k: str) -> None:
         """
-        For both stocks and crypto, if you have some “fundamental” or “protocol” text data, 
-        it can be stored in mid (for Q-like docs) or long (for K-like docs) memory. 
-        """
-        if filing_q != {}:
-            self.brain.add_memory_mid(
-                symbol=self.trading_symbol, date=cur_date, text=filing_q
-            )
-        if filing_k != {}:
-            self.brain.add_memory_long(
-                symbol=self.trading_symbol,
-                date=cur_date,
-                text=filing_k,
-            )
+        Add fundamental text data to memory (mid or long) if present.
 
-    def _handling_news(self, cur_date: date, news: List[str]) -> None:
+        Args:
+            cur_date (date): Current date.
+            filing_q (str): Q-like filing or fundamental data.
+            filing_k (str): K-like filing or fundamental data.
         """
-        General news or short updates for the asset go into short-term memory.
-        """
-        if news != {}:
-            self.brain.add_memory_short(
-                symbol=self.trading_symbol, date=cur_date, text=news
-            )
+        if filing_q:
+            self.brain.add_memory_mid(self.trading_symbol, cur_date, filing_q)
+        if filing_k:
+            self.brain.add_memory_long(self.trading_symbol, cur_date, filing_k)
 
-    def __query_info_for_reflection(self, run_mode: RunMode):
-        logger.info(f"Symbol: {self.trading_symbol}\n")
-        cur_short_queried, cur_short_memory_id = self.brain.query_short(
+    def _handle_news(self, cur_date: date, news: List[str]) -> None:
+        """
+        Add short-term news updates to memory.
+
+        Args:
+            cur_date (date): Current date.
+            news (List[str]): News articles or headlines.
+        """
+        if news:
+            self.brain.add_memory_short(self.trading_symbol, cur_date, news)
+
+    def _query_info_for_reflection(self, run_mode: RunMode):
+        """
+        Query short, mid, long, and reflection memory from BrainDB
+        for the relevant top_k items.
+        """
+        logger.info(f"Querying memory for symbol: {self.trading_symbol}")
+
+        # Short
+        short_queried, short_memory_id = self.brain.query_short(
             query_text=self.character_string,
             top_k=self.top_k,
-            symbol=self.trading_symbol,
+            symbol=self.trading_symbol
         )
-        for cur_id, cur_memory in zip(cur_short_memory_id, cur_short_queried):
-            logger.info(f"Top-k Short: {cur_id}: {cur_memory}\n")
-        cur_mid_queried, cur_mid_memory_id = self.brain.query_mid(
+        for idx, memory_text in zip(short_memory_id, short_queried):
+            logger.info(f"ShortTerm - ID: {idx}, Memory: {memory_text}")
+
+        # Mid
+        mid_queried, mid_memory_id = self.brain.query_mid(
             query_text=self.character_string,
             top_k=self.top_k,
-            symbol=self.trading_symbol,
+            symbol=self.trading_symbol
         )
-        for cur_id, cur_memory in zip(cur_mid_memory_id, cur_mid_queried):
-            logger.info(f"Top-k Mid: {cur_id}: {cur_memory}\n")
-        cur_long_queried, cur_long_memory_id = self.brain.query_long(
+        for idx, memory_text in zip(mid_memory_id, mid_queried):
+            logger.info(f"MidTerm - ID: {idx}, Memory: {memory_text}")
+
+        # Long
+        long_queried, long_memory_id = self.brain.query_long(
             query_text=self.character_string,
             top_k=self.top_k,
-            symbol=self.trading_symbol,
+            symbol=self.trading_symbol
         )
-        for cur_id, cur_memory in zip(cur_long_memory_id, cur_long_queried):
-            logger.info(f"Top-k Long: {cur_id}: {cur_memory}\n")
-        (
-            cur_reflection_queried,
-            cur_reflection_memory_id,
-        ) = self.brain.query_reflection(
+        for idx, memory_text in zip(long_memory_id, long_queried):
+            logger.info(f"LongTerm - ID: {idx}, Memory: {memory_text}")
+
+        # Reflection
+        reflection_queried, reflection_memory_id = self.brain.query_reflection(
             query_text=self.character_string,
             top_k=self.top_k,
-            symbol=self.trading_symbol,
+            symbol=self.trading_symbol
         )
-        for cur_id, cur_memory in zip(cur_reflection_memory_id, cur_reflection_queried):
-            logger.info(f"Top-k Reflection: {cur_id}: {cur_memory}\n")
+        for idx, memory_text in zip(reflection_memory_id, reflection_queried):
+            logger.info(f"ReflectionTerm - ID: {idx}, Memory: {memory_text}")
 
         if run_mode == RunMode.Test:
-            cur_moment_ret = self.portfolio.get_moment(moment_window=2)
-            cur_moment = (
-                cur_moment_ret["moment"] if cur_moment_ret is not None else None
-            )
+            # For test mode, also retrieve momentum info
+            momentum_ret = self.portfolio.get_moment(moment_window=2)
+            momentum_value = momentum_ret["moment"] if momentum_ret else None
             return (
-                cur_short_queried,
-                cur_short_memory_id,
-                cur_mid_queried,
-                cur_mid_memory_id,
-                cur_long_queried,
-                cur_long_memory_id,
-                cur_reflection_queried,
-                cur_reflection_memory_id,
-                cur_moment,
+                short_queried, short_memory_id,
+                mid_queried, mid_memory_id,
+                long_queried, long_memory_id,
+                reflection_queried, reflection_memory_id,
+                momentum_value
             )
         else:
             return (
-                cur_short_queried,
-                cur_short_memory_id,
-                cur_mid_queried,
-                cur_mid_memory_id,
-                cur_long_queried,
-                cur_long_memory_id,
-                cur_reflection_queried,
-                cur_reflection_memory_id,
+                short_queried, short_memory_id,
+                mid_queried, mid_memory_id,
+                long_queried, long_memory_id,
+                reflection_queried, reflection_memory_id
             )
 
-    def __reflection_on_record(
+    def _reflect(
         self,
         cur_date: date,
         run_mode: RunMode,
-        cur_record: Union[float, None] = None,
-    ) -> Dict[str, Any]:
-        # reflection
+        future_diff: Union[float, None] = None,
+    ) -> None:
+        """
+        Invoke the reflection LLM for the given date and run mode. 
+        Stores the reflection result in reflection_result_series_dict.
+        """
         if run_mode == RunMode.Train:
             (
-                cur_short_queried,
-                cur_short_memory_id,
-                cur_mid_queried,
-                cur_mid_memory_id,
-                cur_long_queried,
-                cur_long_memory_id,
-                cur_reflection_queried,
-                cur_reflection_memory_id,
-            ) = self.__query_info_for_reflection(run_mode=run_mode)
+                short_queried, short_memory_id,
+                mid_queried, mid_memory_id,
+                long_queried, long_memory_id,
+                reflection_queried, reflection_memory_id
+            ) = self._query_info_for_reflection(run_mode=run_mode)
+
             reflection_result = trading_reflection(
                 cur_date=cur_date,
                 symbol=self.trading_symbol,
                 run_mode=run_mode,
                 endpoint_func=self.guardrail_endpoint,
-                short_memory=cur_short_queried,
-                short_memory_id=cur_short_memory_id,
-                mid_memory=cur_mid_queried,
-                mid_memory_id=cur_mid_memory_id,
-                long_memory=cur_long_queried,
-                long_memory_id=cur_long_memory_id,
-                reflection_memory=cur_reflection_queried,
-                reflection_memory_id=cur_reflection_memory_id,
-                future_record=cur_record,  # type: ignore
+                short_memory=short_queried,
+                short_memory_id=short_memory_id,
+                mid_memory=mid_queried,
+                mid_memory_id=mid_memory_id,
+                long_memory=long_queried,
+                long_memory_id=long_memory_id,
+                reflection_memory=reflection_queried,
+                reflection_memory_id=reflection_memory_id,
+                future_record=future_diff if future_diff is not None else 0.0
             )
-        else:
+
+        else:  # run_mode == RunMode.Test
             (
-                cur_short_queried,
-                cur_short_memory_id,
-                cur_mid_queried,
-                cur_mid_memory_id,
-                cur_long_queried,
-                cur_long_memory_id,
-                cur_reflection_queried,
-                cur_reflection_memory_id,
-                cur_moment,
-            ) = self.__query_info_for_reflection(run_mode=run_mode)
+                short_queried, short_memory_id,
+                mid_queried, mid_memory_id,
+                long_queried, long_memory_id,
+                reflection_queried, reflection_memory_id,
+                momentum_value
+            ) = self._query_info_for_reflection(run_mode=run_mode)
+
             reflection_result = trading_reflection(
                 cur_date=cur_date,
                 symbol=self.trading_symbol,
                 run_mode=run_mode,
                 endpoint_func=self.guardrail_endpoint,
-                short_memory=cur_short_queried,
-                short_memory_id=cur_short_memory_id,
-                mid_memory=cur_mid_queried,
-                mid_memory_id=cur_mid_memory_id,
-                long_memory=cur_long_queried,
-                long_memory_id=cur_long_memory_id,
-                reflection_memory=cur_reflection_queried,
-                reflection_memory_id=cur_reflection_memory_id,
-                momentum=cur_moment,
+                short_memory=short_queried,
+                short_memory_id=short_memory_id,
+                mid_memory=mid_queried,
+                mid_memory_id=mid_memory_id,
+                long_memory=long_queried,
+                long_memory_id=long_memory_id,
+                reflection_memory=reflection_queried,
+                reflection_memory_id=reflection_memory_id,
+                momentum=momentum_value,
             )
 
         if reflection_result and ("summary_reason" in reflection_result):
             self.brain.add_memory_reflection(
                 symbol=self.trading_symbol,
                 date=cur_date,
-                text=reflection_result["summary_reason"],
+                text=reflection_result["summary_reason"]
             )
         else:
-            logger.info("No reflection result or not converged\n")
+            logger.info("No reflection result or it did not converge properly.")
 
-        return reflection_result
+        self.reflection_result_series_dict[cur_date] = reflection_result
 
-    def _reflect(
-        self,
-        cur_date: date,
-        run_mode: RunMode,
-        cur_record: Union[float, None] = None,
-    ) -> None:
-        reflection_result_cur_date = self.__reflection_on_record(
-            cur_date=cur_date,
-            cur_record=cur_record,
-            run_mode=run_mode,
-        )
-        self.reflection_result_series_dict[cur_date] = reflection_result_cur_date
-
+        # Log reflection
         if run_mode == RunMode.Train:
             logger.info(
-                f"{self.trading_symbol}-Day {cur_date}\nreflection summary: {reflection_result_cur_date.get('summary_reason')}\n\n"
+                f"{self.trading_symbol} - {cur_date} (Train)\n"
+                f"Reflection Summary: {reflection_result.get('summary_reason')}\n"
             )
-        elif run_mode == RunMode.Test:
-            if reflection_result_cur_date:
+        else:  # Test
+            if reflection_result:
                 logger.info(
-                    f"!!trading decision: {reflection_result_cur_date['investment_decision']} !! {self.trading_symbol}-Day {cur_date}\ninvestment reason: {reflection_result_cur_date.get('summary_reason')}\n\n"
+                    f"{self.trading_symbol} - {cur_date} (Test)\n"
+                    f"Decision: {reflection_result.get('investment_decision')}\n"
+                    f"Reason: {reflection_result.get('summary_reason')}\n"
                 )
-            else:
-                logger.info("no decision")
 
-    def _construct_train_actions(self, cur_record: float) -> Dict[str, int]:
+    def _construct_train_actions(self, future_diff: float) -> Dict[str, int]:
         """
-        For training, define a “direction” (1 or -1) if future price difference is positive or negative.
-        You could also adapt to partial shares or other logic for crypto.
-        """
-        cur_direction = 1 if cur_record > 0 else -1
-        return {"direction": cur_direction, "quantity": 1}
+        For training: define an action based on future price difference.
 
-    def _portfolio_step(self, cur_actions: Dict[str, int]) -> None:
-        self.portfolio.record_action(action=cur_actions)
+        Args:
+            future_diff (float): Next-step price difference.
+
+        Returns:
+            Dict[str, int]: e.g. {"direction": +1, "quantity": 1} if price is expected to rise.
+        """
+        direction = 1 if future_diff > 0 else -1
+        return {"direction": direction, "quantity": 1}
+
+    def _portfolio_step(self, action: Dict[str, int]) -> None:
+        """
+        Record the action in the portfolio, then update portfolio series.
+        """
+        self.portfolio.record_action(action=action)
         self.portfolio.update_portfolio_series()
 
-    def __update_access_counter_sub(
-        self, cur_memory: Dict[str, Any], layer_index_name: str, feedback: Dict[str, Union[int, date]]
-    ) -> None:
-        cur_ids = []
-        for i in cur_memory[layer_index_name]:
-            cur_id = i["memory_index"]
-            if cur_id not in cur_ids:
-                cur_ids.append(cur_id)
-        self.brain.update_access_count_with_feed_back(
-            symbol=self.trading_symbol,
-            ids=cur_ids,
-            feedback=feedback["feedback"],
-        )
-
-    def __update_short_memory_access_counter(
-        self,
-        feedback: Dict[str, Union[int, date]],
-        cur_memory: Dict[str, Any],
-    ) -> None:
-        if "short_memory_index" in cur_memory:
-            self.__update_access_counter_sub(
-                cur_memory=cur_memory,
-                layer_index_name="short_memory_index",
-                feedback=feedback,
-            )
-
-    def __update_mid_memory_access_counter(
-        self,
-        feedback: Dict[str, Union[int, date]],
-        cur_memory: Dict[str, Any],
-    ) -> None:
-        if "middle_memory_index" in cur_memory:
-            self.__update_access_counter_sub(
-                cur_memory=cur_memory,
-                layer_index_name="middle_memory_index",
-                feedback=feedback,
-            )
-
-    def __update_long_memory_access_counter(
-        self,
-        feedback: Dict[str, Union[int, date]],
-        cur_memory: Dict[str, Any],
-    ) -> None:
-        if "long_memory_index" in cur_memory:
-            self.__update_access_counter_sub(
-                cur_memory=cur_memory,
-                layer_index_name="long_memory_index",
-                feedback=feedback,
-            )
-
-    def __update_reflection_memory_access_counter(
-        self,
-        feedback: Dict[str, Union[int, date]],
-        cur_memory: Dict[str, Any],
-    ) -> None:
-        if "reflection_memory_index" in cur_memory:
-            self.__update_access_counter_sub(
-                cur_memory=cur_memory,
-                layer_index_name="reflection_memory_index",
-                feedback=feedback,
-            )
-
-    @staticmethod
-    def __process_test_action(test_reflection_result: Dict[str, Any]) -> Dict[str, int]:
+    def _update_access_counter(self) -> None:
         """
-        Convert reflection result into actual trade. 
-        'buy' => direction +1, 'sell' => direction -1, 'hold' => 0 
-        for either stock or crypto.
+        Update memory importance scores based on portfolio feedback signals.
         """
-        if test_reflection_result and test_reflection_result["investment_decision"] == "buy":
-            return {"direction": 1}
-        elif test_reflection_result and test_reflection_result["investment_decision"] == "hold":
-            return {"direction": 0}
-        elif test_reflection_result and test_reflection_result["investment_decision"] == "sell":
-            return {"direction": -1}
-        else:
-            # fallback if no result
-            return {"direction": 0}
-
-    def _update_access_counter(self):
-        if not (feedback := self.portfolio.get_feedback_response()):
+        feedback = self.portfolio.get_feedback_response()
+        if not feedback:
             return
+
         if feedback["feedback"] != 0:
             cur_date = feedback["date"]
-            cur_memory = self.reflection_result_series_dict[cur_date]
-            self.__update_short_memory_access_counter(feedback, cur_memory)
-            self.__update_mid_memory_access_counter(feedback, cur_memory)
-            self.__update_long_memory_access_counter(feedback, cur_memory)
-            self.__update_reflection_memory_access_counter(feedback, cur_memory)
+            reflection_record = self.reflection_result_series_dict.get(cur_date, {})
+            if reflection_record:
+                self._update_memory_access_by_layer(feedback, reflection_record)
+
+    def _update_memory_access_by_layer(
+        self,
+        feedback: Dict[str, Union[int, date]],
+        reflection_record: Dict[str, Any],
+    ) -> None:
+        """
+        Update memory access counters across different memory layers
+        (short, mid, long, reflection) if IDs are found in the reflection record.
+        """
+        def _update_sub(layer_key: str):
+            if layer_key in reflection_record:
+                layer_items = reflection_record[layer_key]
+                if isinstance(layer_items, list):
+                    memory_ids = [item["memory_index"] for item in layer_items]
+                    self.brain.update_access_count_with_feed_back(
+                        symbol=self.trading_symbol,
+                        ids=memory_ids,
+                        feedback=feedback["feedback"],  # type: ignore
+                    )
+
+        _update_sub("short_memory_index")
+        _update_sub("middle_memory_index")
+        _update_sub("long_memory_index")
+        _update_sub("reflection_memory_index")
+
+    @staticmethod
+    def _process_test_action(reflection_result: Dict[str, Any]) -> Dict[str, int]:
+        """
+        Convert reflection test result (buy/sell/hold) to a trade action.
+
+        Args:
+            reflection_result (Dict[str, Any]): Output from reflection with 'investment_decision'.
+
+        Returns:
+            Dict[str, int]: The direction of the action, e.g., {"direction": 1} for buy.
+        """
+        decision = reflection_result.get("investment_decision")
+        if decision == "buy":
+            return {"direction": 1}
+        elif decision == "hold":
+            return {"direction": 0}
+        elif decision == "sell":
+            return {"direction": -1}
+        else:
+            # fallback
+            return {"direction": 0}
 
     def step(
         self,
@@ -382,60 +385,86 @@ class LLMAgent(Agent):
         run_mode: RunMode,
     ) -> None:
         """
-        One iteration of the environment + reflection agent loop.
-        market_info is: (cur_date, cur_price, filing_k, filing_q, news, cur_record, done_flag).
-        For crypto or other assets, 'filing_k' / 'filing_q' can be repurposed as protocol updates, 
-        chain metrics, etc.
+        Perform a single step of environment + reflection for the agent.
+
+        Args:
+            market_info (market_info_type): Contains:
+                (cur_date, cur_price, filing_k, filing_q, news, future_diff, done)
+            run_mode (RunMode): Whether training or testing.
+
+        Raises:
+            ValueError: If run_mode is not Train or Test.
         """
         if run_mode not in [RunMode.Train, RunMode.Test]:
-            raise ValueError("run_mode should be either Train or Test")
+            raise ValueError("run_mode should be either RunMode.Train or RunMode.Test")
 
-        (cur_date, cur_price, cur_filing_k, cur_filing_q, cur_news, 
-         cur_record, done) = market_info
+        (
+            cur_date,
+            cur_price,
+            filing_k,
+            filing_q,
+            news,
+            future_diff,
+            done
+        ) = market_info
 
         if done:
             return
 
-        # 1. handle fundamental/protocol docs
-        self._handling_filings(
-            cur_date=cur_date, filing_q=cur_filing_q, filing_k=cur_filing_k
-        )
-        # 2. handle news
-        self._handling_news(cur_date=cur_date, news=cur_news)
-        # 3. update portfolio with new price
-        self.portfolio.update_market_info(
-            new_market_price_info=cur_price,
-            cur_date=cur_date,
-        )
-        # 4. reflection
-        self._reflect(
-            cur_date=cur_date,
-            run_mode=run_mode,
-            cur_record=cur_record,
-        )
-        # 5. decide action
+        # 1. Handle fundamental filings (mid/long)
+        self._handle_filings(cur_date, filing_q, filing_k)
+
+        # 2. Handle news (short memory)
+        self._handle_news(cur_date, news)
+
+        # 3. Update portfolio with market price
+        self.portfolio.update_market_info(new_market_price_info=cur_price, cur_date=cur_date)
+
+        # 4. LLM reflection
+        self._reflect(cur_date=cur_date, run_mode=run_mode, future_diff=future_diff)
+
+        # 5. Decide action
         if run_mode == RunMode.Train:
-            cur_action = self._construct_train_actions(cur_record=cur_record)  # type: ignore
+            action = self._construct_train_actions(future_diff=future_diff)  # type: ignore
         else:
-            cur_action = self.__process_test_action(
-                test_reflection_result=self.reflection_result_series_dict[cur_date]
-            )
-        # 6. portfolio step
-        self._portfolio_step(cur_actions=cur_action)
-        # 7. memory access counter
+            reflection_record = self.reflection_result_series_dict.get(cur_date, {})
+            action = self._process_test_action(reflection_record)
+
+        # 6. Update portfolio with the chosen action
+        self._portfolio_step(action)
+
+        # 7. Update memory importance
         self._update_access_counter()
-        # 8. memory step (decay / clean up / jump)
+
+        # 8. Step memory (decay, cleanup, jump)
         self.brain.step()
 
+    def train_step(self) -> None:
+        """
+        Satisfy the abstract method. This could be a custom method for
+        more advanced logic if needed. Currently unused.
+        """
+        pass
+
     def save_checkpoint(self, path: str, force: bool = False) -> None:
+        """
+        Save the agent state to disk, including the BrainDB.
+
+        Args:
+            path (str): Directory where agent state will be saved.
+            force (bool): Whether to overwrite existing directory.
+        """
         path = os.path.join(path, self.agent_name)
         if os.path.exists(path):
             if force:
                 shutil.rmtree(path)
             else:
-                raise FileExistsError(f"Path {path} already exists")
+                raise FileExistsError(f"Path {path} already exists.")
         os.mkdir(path)
+
+        # Brain DB
         os.mkdir(os.path.join(path, "brain"))
+
         state_dict = {
             "agent_name": self.agent_name,
             "character_string": self.character_string,
@@ -449,17 +478,29 @@ class LLMAgent(Agent):
             "reflection_result_series_dict": self.reflection_result_series_dict,
             "access_counter": self.access_counter,
         }
+
         with open(os.path.join(path, "state_dict.pkl"), "wb") as f:
             pickle.dump(state_dict, f)
 
-        self.brain.save_checkpoint(path=os.path.join(path, "brain"), force=force)
+        self.brain.save_checkpoint(os.path.join(path, "brain"), force=force)
 
     @classmethod
     def load_checkpoint(cls, path: str) -> "LLMAgent":
+        """
+        Load an LLMAgent state from disk.
+
+        Args:
+            path (str): The path to the saved agent directory.
+
+        Returns:
+            LLMAgent: A restored LLMAgent instance.
+        """
         with open(os.path.join(path, "state_dict.pkl"), "rb") as f:
             state_dict = pickle.load(f)
-        brain = BrainDB.load_checkpoint(path=os.path.join(path, "brain"))
-        class_obj = cls(
+
+        brain = BrainDB.load_checkpoint(os.path.join(path, "brain"))
+
+        loaded_agent = cls(
             agent_name=state_dict["agent_name"],
             trading_symbol=state_dict["trading_symbol"],
             character_string=state_dict["character_string"],
@@ -468,9 +509,11 @@ class LLMAgent(Agent):
             chat_end_point_name=state_dict["chat_end_point_name"],
             chat_end_point_config=state_dict["chat_end_point_config"],
         )
-        class_obj.chat_end_point = state_dict["chat_end_point"]
-        class_obj.portfolio = state_dict["portfolio"]
-        class_obj.reflection_result_series_dict = state_dict["reflection_result_series_dict"]
-        class_obj.access_counter = state_dict["access_counter"]
-        class_obj.counter = state_dict["counter"]
-        return class_obj
+        # Restore the agent attributes
+        loaded_agent.chat_end_point = state_dict["chat_end_point"]
+        loaded_agent.portfolio = state_dict["portfolio"]
+        loaded_agent.reflection_result_series_dict = state_dict["reflection_result_series_dict"]
+        loaded_agent.access_counter = state_dict["access_counter"]
+        loaded_agent.counter = state_dict["counter"]
+
+        return loaded_agent

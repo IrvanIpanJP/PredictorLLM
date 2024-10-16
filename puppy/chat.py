@@ -8,16 +8,29 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
 class ChatBase(ABC):
-    @abstractmethod  # type: ignore
-    def __call__(self) -> None:
+    """
+    An abstract base class for chat endpoints, typically used
+    to interface with an LLM. Subclasses must implement the __call__ method
+    (synchronous text generation) and guardrail_endpoint method (for usage
+    with guardrails-based validation).
+    """
+
+    @abstractmethod
+    def __call__(self, text: str, **kwargs) -> str:
+        """Synchronous text generation."""
         pass
 
-    @abstractmethod  # type: ignore
-    def guardrail_endpoint(self) -> None:
+    @abstractmethod
+    def guardrail_endpoint(self) -> Callable[[str], str]:
+        """Returns a function that is suitable for usage in guardrails calls."""
         pass
 
 
 class ChatTogetherEndpoint(ChatBase):
+    """
+    Uses the Together API to generate text from a model such as LLaMA-2.
+    """
+
     def __init__(
         self,
         api_key: Union[str, None] = None,
@@ -30,10 +43,22 @@ class ChatTogetherEndpoint(ChatBase):
         repetition_penalty: float = 1.0,
         request_timeout: int = 600,
     ) -> None:
-        # stop
-        if stop is None:
-            self.stop = ["<human>"]
-        # params
+        """
+        Initialize a Together API-based chat endpoint.
+
+        Args:
+            api_key (str, optional): Together API key. If None, attempts
+                to use TOGETHER_API_KEY from environment.
+            model (str): Name of the model at Together to use.
+            max_tokens (int): Maximum tokens for the response.
+            stop (List[str], optional): Stop sequences. Defaults to ["<human>"].
+            temperature (float): Sampling temperature.
+            top_p (float): Nucleus sampling proportion.
+            top_k (int): Top-k sampling cutoff.
+            repetition_penalty (float): Penalty for repeated tokens.
+            request_timeout (int): Timeout for requests in seconds.
+        """
+        self.stop = stop or ["<human>"]
         self.api_key = os.getenv("TOGETHER_API_KEY") if api_key is None else api_key
         self.model = model
         self.max_tokens = max_tokens
@@ -42,9 +67,8 @@ class ChatTogetherEndpoint(ChatBase):
         self.top_k = top_k
         self.repetition_penalty = repetition_penalty
         self.request_timeout = request_timeout
-        # api related
+
         self.end_point = "https://api.together.xyz/inference"
-        # transaction
         self.headers = {
             "accept": "application/json",
             "content-type": "application/json",
@@ -52,15 +76,23 @@ class ChatTogetherEndpoint(ChatBase):
         }
 
     def parse_response(self, response: requests.Response) -> str:
+        """Parse the text from the JSON response."""
         return response.json()["output"]["choices"][0]["text"]
 
     def __call__(self, text: str, **kwargs) -> str:
+        """
+        Generate text given an input prompt.
+
+        Args:
+            text (str): The user input text.
+
+        Returns:
+            str: The model's response text.
+        """
         transaction_payload = {
             "model": self.model,
             "prompt": f"<human>: {text}\n<bot>:",
-            "stop": [
-                "<human>",
-            ],
+            "stop": self.stop,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -79,64 +111,105 @@ class ChatTogetherEndpoint(ChatBase):
         return self.parse_response(response)
 
     def guardrail_endpoint(self) -> Callable[[str], str]:
+        """
+        Return a callable that can be used by guardrails to produce text.
+
+        Returns:
+            Callable[[str], str]: A function that calls this instance with an input prompt.
+        """
         return self
 
 
-class ChatOpenAIEndPoint:
+class ChatOpenAIEndpoint(ChatBase):
+    """
+    A chat endpoint that uses OpenAI's ChatCompletion API (e.g. GPT-4).
+    """
+
     def __init__(
         self,
         model_name: str = "gpt-4",
         temperature: float = 0.0,
     ):
+        """
+        Args:
+            model_name (str): Which OpenAI chat model to use (e.g. "gpt-3.5-turbo" or "gpt-4").
+            temperature (float): Sampling temperature for output variability.
+        """
         self.model_name = model_name
         self.temperature = temperature
 
-    def guardrail_endpoint(
-        self, system_message: str = "You are a helpful assistant."
-    ) -> Callable[[str], str]:
-        model_name = self.model_name
-        temperature = self.temperature
+    def __call__(self, text: str, **kwargs) -> str:
+        """
+        Direct synchronous call for text generation, if needed outside guardrails usage.
 
-        def end_point(input: str, **kwargs) -> str:
-            input_str = [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": f"{input}"},
-            ]
-            return openai.ChatCompletion.create(  # type: ignore
-                model=model_name, messages=input_str, temperature=temperature
-            )["choices"][
-                0
-            ][  # type: ignore
-                "message"
-            ][  # type: ignore
-                "content"
-            ]  # type: ignore
+        Args:
+            text (str): The user prompt.
 
-        return end_point
+        Returns:
+            str: The generated text.
+        """
+        system_message = kwargs.get("system_message", "You are a helpful assistant.")
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": text},
+        ]
+        response = openai.ChatCompletion.create(
+            model=self.model_name,
+            messages=messages,
+            temperature=self.temperature,
+        )
+        return response["choices"][0]["message"]["content"]
+
+    def guardrail_endpoint(self) -> Callable[[str], str]:
+        """
+        Return a callable that guardrails can use, injecting a system prompt if needed.
+
+        Returns:
+            Callable[[str], str]: Function that calls the ChatCompletion endpoint.
+        """
+
+        def endpoint_func(user_input: str, **kwargs) -> str:
+            return self.__call__(user_input)
+
+        return endpoint_func
 
 
 def get_chat_end_points(
-    end_point_type: str, chat_config: Dict[str, Any]
-) -> Union[ChatOpenAIEndPoint, ChatTogetherEndpoint]:
+    end_point_type: str,
+    chat_config: Dict[str, Any]
+) -> Union[ChatOpenAIEndpoint, ChatTogetherEndpoint]:
+    """
+    Factory function that returns a chat endpoint (OpenAI or Together).
+
+    Args:
+        end_point_type (str): Either "openai" or "together".
+        chat_config (Dict[str, Any]): Configuration dict with relevant parameters.
+
+    Returns:
+        Union[ChatOpenAIEndpoint, ChatTogetherEndpoint]: The configured chat endpoint object.
+
+    Raises:
+        NotImplementedError: If an unsupported endpoint type is provided.
+    """
     match end_point_type:
         case "openai":
-            return ChatOpenAIEndPoint(
-                chat_config["model_name"],
-                chat_config["temperature"],
+            return ChatOpenAIEndpoint(
+                model_name=chat_config["model_name"],
+                temperature=chat_config["temperature"],
             )
         case "together":
             return ChatTogetherEndpoint(
-                chat_config.get("api_key"),
-                chat_config["model"],
-                chat_config["max_tokens"],
-                chat_config.get("stop"),
-                chat_config["temperature"],
-                chat_config["top_p"],
-                chat_config["top_k"],
-                chat_config["repetition_penalty"],
-                chat_config["request_timeout"],
+                api_key=chat_config.get("api_key"),
+                model=chat_config["model"],
+                max_tokens=chat_config["max_tokens"],
+                stop=chat_config.get("stop"),
+                temperature=chat_config["temperature"],
+                top_p=chat_config["top_p"],
+                top_k=chat_config["top_k"],
+                repetition_penalty=chat_config["repetition_penalty"],
+                request_timeout=chat_config["request_timeout"],
             )
         case _:
             raise NotImplementedError(
-                f"Chat end point type {end_point_type} is not implemented."
+                f"Chat endpoint type '{end_point_type}' is not implemented."
             )
