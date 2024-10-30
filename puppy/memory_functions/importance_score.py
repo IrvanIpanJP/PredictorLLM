@@ -1,49 +1,98 @@
+"""
+Defines initialization strategies for importance scores and a helper
+to retrieve the appropriate strategy based on configuration.
+"""
+
 import numpy as np
 from abc import ABC, abstractmethod
 
 
 class ImportanceScoreInitialization(ABC):
+    """
+    Abstract base class for importance score initialization strategies.
+    """
+
     @abstractmethod
     def __call__(self) -> float:
+        """
+        Produce an initial importance score (float).
+        """
         pass
 
 
 def get_importance_score_initialization_func(
-    type: str, memory_layer: str
+    strategy_type: str,
+    memory_layer: str
 ) -> ImportanceScoreInitialization:
-    match type:
+    """
+    Return an appropriate ImportanceScoreInitialization object
+    based on the strategy type and memory layer.
+
+    Args:
+        strategy_type (str): e.g., "sample".
+        memory_layer (str): e.g., "short", "mid", "long", "reflection".
+
+    Returns:
+        ImportanceScoreInitialization: A subclass instance for that layer.
+
+    Raises:
+        ValueError: If the strategy_type or memory_layer is invalid.
+    """
+    match strategy_type:
         case "sample":
             match memory_layer:
                 case "short":
-                    return I_SampleInitialization_Short()
+                    return ISampleInitializationShort()
                 case "mid":
-                    return I_SampleInitialization_Mid()
+                    return ISampleInitializationMid()
                 case "long":
-                    return I_SampleInitialization_Long()
+                    return ISampleInitializationLong()
                 case "reflection":
-                    return I_SampleInitialization_Long()
+                    # reflection could reuse the "long" logic, for example
+                    return ISampleInitializationLong()
                 case _:
-                    raise ValueError("Invalid memory layer type")
+                    raise ValueError(f"Invalid memory layer type: {memory_layer}")
         case _:
-            raise ValueError("Invalid importance score initialization type")
+            raise ValueError(f"Invalid importance score initialization type: {strategy_type}")
 
 
-class I_SampleInitialization_Short(ImportanceScoreInitialization):
+class ISampleInitializationShort(ImportanceScoreInitialization):
+    """
+    Probability-based importance score initialization for the short layer.
+    """
+
     def __call__(self) -> float:
+        """
+        Samples an importance score from a discrete distribution with certain probabilities.
+        """
         probabilities = [0.5, 0.45, 0.05]
         scores = [50.0, 70.0, 90.0]
-        return np.random.choice(scores, p=probabilities)
+        return float(np.random.choice(scores, p=probabilities))
 
 
-class I_SampleInitialization_Mid(ImportanceScoreInitialization):
+class ISampleInitializationMid(ImportanceScoreInitialization):
+    """
+    Probability-based importance score initialization for the mid layer.
+    """
+
     def __call__(self) -> float:
+        """
+        Samples an importance score from a discrete distribution with certain probabilities.
+        """
         probabilities = [0.05, 0.8, 0.15]
         scores = [40.0, 60.0, 80.0]
-        return np.random.choice(scores, p=probabilities)
+        return float(np.random.choice(scores, p=probabilities))
 
 
-class I_SampleInitialization_Long(ImportanceScoreInitialization):
+class ISampleInitializationLong(ImportanceScoreInitialization):
+    """
+    Probability-based importance score initialization for the long (and reflection) layer.
+    """
+
     def __call__(self) -> float:
+        """
+        Samples an importance score from a discrete distribution with certain probabilities.
+        """
         probabilities = [0.05, 0.15, 0.8]
         scores = [40.0, 60.0, 80.0]
-        return np.random.choice(scores, p=probabilities)
+        return float(np.random.choice(scores, p=probabilities))
