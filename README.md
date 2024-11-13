@@ -33,55 +33,77 @@ By continuously learning from market fluctuations—be it stock price changes or
 
 ---
 
-## Usage
+## Getting Started
 
-### Docker Setup
+Follow these steps to quickly set up **PredictorLLM** and start trading:
 
-For a quick and consistent environment, we recommend Docker. A sample `Dockerfile` and VSCode development container config (`.devcontainer/devcontainer.json`) are provided.
+### Prerequisites
 
-### Dependencies
+- **Python 3.10**: Ensure Python 3.10 or higher is installed on your system.
+- **Docker** (optional): For an easy and consistent environment setup.
 
-PredictorLLM runs on **Python 3.10**. We use [Poetry](https://python-poetry.org/) for dependency management. Install dependencies with:
+### 1. Clone the Repository
 
 ```bash
-poetry config virtualenvs.in-project true  # Optional: keep virtualenv in project folder
+git clone https://github.com/IrvanIpanJP/predictor-llm.git
+cd predictor-llm
+```
+
+### 2. Install Dependencies
+
+We recommend using **Poetry** for managing dependencies. First, install Poetry if you haven't already:
+
+```bash
+pip install poetry
+```
+
+Then, install the dependencies:
+
+```bash
 poetry install
 ```
 
-You may also wish to use [pipx](https://pypa.github.io/pipx/) to install Poetry system-wide. Activate the Poetry shell by running `poetry shell` or `source .venv/bin/activate` (if `.venv` is installed locally).
+You may also activate the virtual environment:
 
-### Running the Code
+```bash
+poetry shell
+```
 
-Use `run.py` as the primary entry point:
+Alternatively, use Docker for a containerized setup:
+
+```bash
+docker-compose up --build
+```
+
+### 3. Configure Your Agent
+
+Before running the agent, edit the `config/config.toml` file to customize your settings (e.g., market data paths, memory thresholds, or LLM endpoints).
+
+### 4. Running the Agent
+
+To run the agent and get help with available commands, use:
 
 ```bash
 python run.py --help
 ```
 
-Configuration settings (e.g., memory thresholds, LLM endpoints, or data paths) are specified in `config/config.toml`.
+### 5. Training the Model
 
-### Training the Model
-
-To train the agent:
+To train the agent on your data, use:
 
 ```bash
 python run.py train
 ```
 
-Common options include:
+Specify the required options like market data path and start/end time:
 
-```plaintext
---market-data-path  -mdp      TEXT     The market data path
---start-time        -st       TEXT     The start time
---end-time          -et       TEXT     The end time
---config-path       -cp       TEXT     Config file path [default: config/config.toml]
---checkpoint-path   -ckp      TEXT     Where to store checkpoints
---save-every        -se       INTEGER  Frequency (n steps) for saving checkpoints
---result-path       -rp       TEXT     Where to store training results
---help                                 Show this message and exit.
+```bash
+python run.py train --market-data-path /path/to/data --start-time 2020-01-01 --end-time 2025-01-01
 ```
 
-Training automatically saves checkpoints. To resume from the latest checkpoint:
+### 6. Resume Training from a Checkpoint
+
+If you need to resume training from a checkpoint:
 
 ```bash
 python run.py train-checkpoint
@@ -89,13 +111,41 @@ python run.py train-checkpoint
 
 ---
 
+## Practical Examples
+
+### Example 1: Basic Stock Trading Setup
+
+1. **Data Source**: Use Yahoo Finance to fetch stock data.
+2. **Configuration**: Set `config/config.toml` to point to your local market data folder containing stock price data.
+3. **Run the Agent**:
+
+```bash
+python run.py train --market-data-path ./data/stocks --start-time 2023-01-01 --end-time 2023-12-31
+```
+
+4. **Outcome**: The agent will analyze the data, store relevant information, and generate stock trading strategies based on historical trends.
+
+### Example 2: Crypto Market Analysis
+
+1. **Data Source**: Fetch cryptocurrency data from CoinGecko using their API.
+2. **Configuration**: Point to the crypto data feed in the `config/config.toml` file.
+3. **Run the Agent**:
+
+```bash
+python run.py train --market-data-path ./data/crypto --start-time 2023-01-01 --end-time 2023-12-31
+```
+
+4. **Outcome**: The agent will analyze crypto market behavior, using both price data and on-chain analytics to inform trading strategies.
+
+---
+
 ## Notes
 
 ### Multi-Asset Data Handling
 
-PredictorLLM accommodates both **equity** (stock) data and **cryptocurrency** data. You can provide your own market data feeds, protocol updates, or filings (e.g., SEC 10-Ks for stocks, or on-chain analytics for crypto). The framework’s layered memory allows storing and prioritizing text data—such as **company filings**, **crypto project whitepapers**, **news** articles, and **price** information—in short, mid, long, or reflection-term memory.
+PredictorLLM supports both **equity** (stock) and **cryptocurrency** data. You can configure custom data sources such as company filings, whitepapers, or on-chain metrics for crypto. The agent stores information in a multi-level memory system, ensuring dynamic decision-making.
 
-### Example Data Sources
+### Data Sources
 
 | Type                         | Source                                                | Notes                           | Example Download / API                                       |
 | ---------------------------- | ----------------------------------------------------- | ------------------------------- | ------------------------------------------------------------ |
@@ -104,44 +154,6 @@ PredictorLLM accommodates both **equity** (stock) data and **cryptocurrency** da
 | **Company 10-K / 10-Q**      | [SEC EDGAR](https://www.sec.gov/edgar.shtml)          | e.g., Item 7 / Part 1 Item 2    | [SEC API](https://sec-api.io/docs)                           |
 | **Crypto Price Feeds**       | [CoinGecko API](https://www.coingecko.com/en/api)     | Daily OHLC data, volume, etc.   | [CoinGecko data endpoints](https://www.coingecko.com/en/api) |
 | **On-Chain / Protocol Data** | Etherscan, Polygonscan, or other blockchain explorers | Transaction metrics, DEX volume | Various explorer APIs                                        |
-
-### Data Schemas
-
-Below are illustrative column schemas; feel free to adapt them to crypto or other assets:
-
-**Daily Price (Stock/Crypto)**
-| Column | Type | Notes |
-|-----------|----------|-----------------------------------|
-| `Date` | datetime | Trading or historical date |
-| `Open` | float | Opening price |
-| `High` | float | Highest price during the day |
-| `Low` | float | Lowest price during the day |
-| `Close` | float | Closing price |
-| `Volume` | float | Trading volume or on-chain volume |
-| `Symbol` | str | Ticker symbol or crypto pair |
-
-**Daily News**
-| Column | Type | Notes |
-|-----------|----------|---------------------------|
-| `Author` | str | - |
-| `Content` | str | Main text of the article |
-| `DateTime`| datetime | Timestamp of article |
-| `Date` | datetime | Adjusted to trading hours |
-| `Source` | str | News source, e.g. 'AP' |
-| `Summary` | str | One-line summary |
-| `Title` | str | Headline |
-| `URL` | str | Link to article |
-| `Equity` or `Asset`| str | Stock symbol or crypto name |
-| `Text` | str | Concatenated title/summary|
-
-**Company 10-K / 10-Q or Crypto Whitepapers**
-| Column | Type | Notes |
-|----------------|----------|-------------------------------|
-| `Document URL` | str | Link to original filing/doc |
-| `Content` | str | Extracted text content |
-| `Ticker` | str | Stock ticker or crypto symbol |
-| `UTC Timestamp`| datetime | Filing time (UTC) |
-| `Type` | str | e.g., “10-K”, “Whitepaper” |
 
 ---
 
@@ -158,3 +170,7 @@ This project is licensed under the [MIT License](LICENSE).
 **Happy Trading!**
 
 Leverage the power of LLMs for **stocks**, **crypto**, and beyond — adapt and integrate data sources, and enjoy a flexible, human-like memory system for advanced automated trading.
+
+---
+
+This structure provides an introduction, setup guide, and clear usage instructions with concrete examples for getting started. Let me know if you'd like to adjust anything further!
